@@ -3,9 +3,10 @@
 // app/Http/Controllers/TelegramBotController.php
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
-use Telegram\Bot\Api;
 use App\Models\Subscriber;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Telegram\Bot\Api;
 use Telegram\Bot\Exceptions\TelegramSDKException;
 
 class TelegramBotController extends Controller
@@ -23,6 +24,7 @@ class TelegramBotController extends Controller
      */
     public function webhook(Request $request)
     {
+        Log::info('webhook',$request->all());
         $update = $this->telegram->getWebhookUpdate();
         $chatId = $update->getMessage()?->getChat()?->getId();
         $text = trim($update->getMessage()?->getText());
@@ -51,12 +53,12 @@ class TelegramBotController extends Controller
                 $subscriber->phone = $text;
                 $subscriber->save();
                 return $this->sendOtp($subscriber, $chatId);
-            } else {
-                return $this->telegram->sendMessage([
-                    'chat_id' => $chatId,
-                    'text' => 'Please enter a valid phone number (e.g. +12345678900).'
-                ]);
             }
+
+            return $this->telegram->sendMessage([
+                'chat_id' => $chatId,
+                'text' => 'Please enter a valid phone number (e.g. +12345678900).'
+            ]);
         }
 
         if ($subscriber->verified) {
@@ -82,18 +84,18 @@ class TelegramBotController extends Controller
                     'chat_id' => $chatId,
                     'text' => '🎉 Your subscription has been successful!'
                 ]);
-            } else {
-                return $this->telegram->sendMessage([
-                    'chat_id' => $chatId,
-                    'text' => '❌ Incorrect OTP. Please try again or type /resend to get a new code.'
-                ]);
             }
-        } else {
+
             return $this->telegram->sendMessage([
                 'chat_id' => $chatId,
-                'text' => '⏱ OTP expired or not found. Type /resend to get a new one.'
+                'text' => '❌ Incorrect OTP. Please try again or type /resend to get a new code.'
             ]);
         }
+
+        return $this->telegram->sendMessage([
+            'chat_id' => $chatId,
+            'text' => '⏱ OTP expired or not found. Type /resend to get a new one.'
+        ]);
     }
 
     protected function sendOtp($subscriber, $chatId)
