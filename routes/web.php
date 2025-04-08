@@ -7,5 +7,6 @@ Route::get('/', function () {
     return view('welcome');
 });
 
-Route::post('/bot/webhook', [TelegramBotController::class, 'webhook']);
+Route::post('/bot/webhook', [TelegramBotController::class, 'webhook'])
+    ->withoutMiddleware([Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class]);
 
