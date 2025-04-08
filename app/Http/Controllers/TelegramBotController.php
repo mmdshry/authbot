@@ -18,87 +18,93 @@ class TelegramBotController extends Controller
 
     public function webhook(Request $request)
     {
-        $update = $this->telegram->getWebhookUpdate();
+        $data = $request->all(); // Get all data from the request
 
-        $message = $update->getMessage();
-        $chatId = $message?->getChat()?->getId();
-        $text = trim($message?->getText());
-        $contact = $message?->getContact();
+        // Check if the event is a 'message' event
+        if (isset($data['message'])) {
+            $message = $data['message'];
+            $chatId = $message['chat']['id'];
+            $text = $message['text'] ?? null;
+            $contact = $message['contact'] ?? null;
 
-        // Get or create subscriber
-        $subscriber = Subscriber::firstOrCreate(['telegram_id' => $chatId]);
+            // Get or create subscriber
+            $subscriber = Subscriber::firstOrCreate(['telegram_id' => $chatId]);
 
-        // Handle /start
-        if ($text === '/start') {
-            return $this->telegram->sendMessage([
-                'chat_id' => $chatId,
-                'text' => "👋 Welcome! Please share your phone number to continue:",
-                'reply_markup' => json_encode([
-                    'keyboard' => [
-                        [[
-                             'text' => '📱 Share My Phone Number',
-                             'request_contact' => true
-                         ]]
-                    ],
-                    'resize_keyboard' => true,
-                    'one_time_keyboard' => true
-                ])
-            ]);
-        }
-
-        // Handle contact sharing
-        if ($contact && $contact->getPhoneNumber()) {
-            $subscriber->phone = $contact->getPhoneNumber();
-            $subscriber->save();
-
-            return $this->sendOtp($subscriber, $chatId);
-        }
-
-        // If not verified and no phone number, block manual input
-        if (!$subscriber->phone) {
-            return $this->telegram->sendMessage([
-                'chat_id' => $chatId,
-                'text' => '⚠️ Please use the button to share your phone number.'
-            ]);
-        }
-
-        // Already verified
-        if ($subscriber->verified) {
-            return $this->telegram->sendMessage([
-                'chat_id' => $chatId,
-                'text' => '✅ You are already subscribed.'
-            ]);
-        }
-
-        // Handle /resend
-        if ($text === '/resend') {
-            return $this->sendOtp($subscriber, $chatId);
-        }
-
-        // OTP check
-        if ($subscriber->otp && $subscriber->otp_expires_at && now()->lessThan($subscriber->otp_expires_at)) {
-            if ($text === $subscriber->otp) {
-                $subscriber->verified = true;
-                $subscriber->otp = null;
-                $subscriber->otp_expires_at = null;
-                $subscriber->save();
-
+            // Handle /start command
+            if ($text === '/start') {
                 return $this->telegram->sendMessage([
                     'chat_id' => $chatId,
-                    'text' => '🎉 Your subscription has been successful!'
+                    'text' => "👋 Welcome! Please share your phone number to continue:",
+                    'reply_markup' => json_encode([
+                        'keyboard' => [
+                            [[
+                                 'text' => '📱 Share My Phone Number',
+                                 'request_contact' => true
+                             ]]
+                        ],
+                        'resize_keyboard' => true,
+                        'one_time_keyboard' => true
+                    ])
                 ]);
+            }
+
+            // Handle contact sharing (Phone number)
+            if ($contact && isset($contact['phone_number'])) {
+                $subscriber->phone = $contact['phone_number'];
+                $subscriber->save();
+
+                return $this->sendOtp($subscriber, $chatId);
+            }
+
+            // Handle /resend command for OTP
+            if ($text === '/resend') {
+                return $this->sendOtp($subscriber, $chatId);
+            }
+
+            // If OTP is already sent, ask for it
+            if ($subscriber->otp && $subscriber->otp_expires_at && now()->lessThan($subscriber->otp_expires_at)) {
+                if ($text === $subscriber->otp) {
+                    $subscriber->verified = true;
+                    $subscriber->otp = null;
+                    $subscriber->otp_expires_at = null;
+                    $subscriber->save();
+
+                    return $this->telegram->sendMessage([
+                        'chat_id' => $chatId,
+                        'text' => '🎉 Your subscription has been successful!'
+                    ]);
+                } else {
+                    return $this->telegram->sendMessage([
+                        'chat_id' => $chatId,
+                        'text' => '❌ Incorrect OTP. Please try again or type /resend to get a new code.'
+                    ]);
+                }
             } else {
                 return $this->telegram->sendMessage([
                     'chat_id' => $chatId,
-                    'text' => '❌ Incorrect OTP. Please try again or type /resend to get a new code.'
+                    'text' => '⏱ OTP expired or not found. Type /resend to get a new one.'
                 ]);
             }
-        } else {
-            return $this->telegram->sendMessage([
-                'chat_id' => $chatId,
-                'text' => '⏱ OTP expired or not found. Type /resend to get a new one.'
-            ]);
         }
+
+        // Handle other types of events like chat member changes
+        if (isset($data['my_chat_member'])) {
+            $chatMemberEvent = $data['my_chat_member'];
+
+            // Log changes in chat members (optional)
+            Log::info("Chat member status changed: ", $chatMemberEvent);
+
+            // Example: Handle when bot is added to a group or kicked
+            if ($chatMemberEvent['new_chat_member']['status'] == 'member') {
+                Log::info('Bot added to a new chat');
+            }
+
+            if ($chatMemberEvent['new_chat_member']['status'] == 'kicked') {
+                Log::info('Bot was kicked from a chat');
+            }
+        }
+
+        return response()->json(['status' => 'ok']);
     }
 
     protected function sendOtp($subscriber, $chatId)
@@ -118,7 +124,7 @@ class TelegramBotController extends Controller
         $subscriber->last_sent_at = now();
         $subscriber->save();
 
-        // Simulate SMS
+        // Simulate SMS (You should replace this with real SMS logic)
         Log::info("📲 Sending OTP to {$subscriber->phone}: $otp");
 
         return $this->telegram->sendMessage([
