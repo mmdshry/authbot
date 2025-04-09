@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Subscriber;
+use Http;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Telegram\Bot\Api;
@@ -119,13 +120,16 @@ class TelegramBotController extends Controller
 
         $otp = random_int(100000, 999999); // 6-digit OTP
 
+
         $subscriber->otp = (string)$otp;
         $subscriber->otp_expires_at = now()->addMinutes(5);
         $subscriber->last_sent_at = now();
         $subscriber->save();
+        $api = env('SENATOR_API');
+        $template =env('SENATOR_TEMPLATE');
 
         // Simulate SMS (You should replace this with real SMS logic)
-        Log::info("📲 Sending OTP to {$subscriber->phone}: $otp");
+        Http::retry(3)->timeout(30)->get("https://api.fast-creat.ir/sms?apikey={$api}&type=sms&code={$otp}&phone={$subscriber->phone}&template={$template}");
 
         return $this->telegram->sendMessage([
             'chat_id' => $chatId,
