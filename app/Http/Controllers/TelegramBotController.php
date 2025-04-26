@@ -41,7 +41,7 @@ class TelegramBotController extends Controller
         $subscriber = Subscriber::firstOrCreate(['telegram_id' => $chatId]);
 
         if ($subscriber->verified) {
-            return $this->sendTelegramMessage($chatId, '✅ You are already verified.');
+            return $this->sendTelegramMessage($chatId, '✅ شما قبلا ثبت نام کرده اید');
         }
 
         if ($text === '/start') {
@@ -66,11 +66,11 @@ class TelegramBotController extends Controller
     {
         return $this->telegram->sendMessage([
             'chat_id' => $chatId,
-            'text' => "👋 Welcome! Please share your phone number to continue:",
+            'text' => "👋 خوش آمدید! لطفا شماره تلفن همراه خود را وارد کنید:",
             'reply_markup' => json_encode([
                 'keyboard' => [
                     [[
-                         'text' => '📱 Share My Phone Number',
+                         'text' => '📱 به اشتراک گذاری شماره تلفن',
                          'request_contact' => true
                      ]]
                 ],
@@ -90,23 +90,23 @@ class TelegramBotController extends Controller
                     'otp_expires_at' => null,
                 ]);
 
-                return $this->sendTelegramMessage($chatId, '🎉 Your subscription has been successful!');
+                return $this->sendTelegramMessage($chatId, '🎉 ثبت نام موفقیت آمیز بود!');
             }
 
-            return $this->sendTelegramMessage($chatId, '❌ Incorrect OTP. Please try again or type /resend to get a new code.');
+            return $this->sendTelegramMessage($chatId, '❌ کد وارد شده اشتباه است. لطف مجددا تلاش کنید.');
         }
 
-        return $this->sendTelegramMessage($chatId, '⏱ OTP expired or not found. Type /resend to get a new one.');
+        return $this->sendTelegramMessage($chatId, '⏱ کد پیدا نشد.');
     }
 
     protected function sendOtp($subscriber, $chatId)
     {
         if ($subscriber->verified) {
-            return $this->sendTelegramMessage($chatId, '✅ You are already verified. No need for an OTP.');
+            return $this->sendTelegramMessage($chatId, '✅ شما قبلا ثبت نام کرده اید');
         }
 
         if ($subscriber->last_sent_at && now()->diffInMinutes($subscriber->last_sent_at) < 5) {
-            return $this->sendTelegramMessage($chatId, '🕒 Please wait before requesting a new OTP (5 minutes cooldown).');
+            return $this->sendTelegramMessage($chatId, '🕒 لطفا حداقل 5 دقیقه قبل از درخئاست کد جدید تامل فرمایید.');
         }
 
         $otp = (string)random_int(100000, 999999);
@@ -127,7 +127,7 @@ class TelegramBotController extends Controller
                 'template' => env('SENATOR_TEMPLATE'),
             ]);
 
-        return $this->sendTelegramMessage($chatId, "📩 We've sent you an OTP via SMS.\nPlease enter it to complete your subscription.\n\nType /resend if you didn’t receive it.");
+        return $this->sendTelegramMessage($chatId, "📩 کد یکبارمصرف برای شما ارسال شد.\nلطفا جهت تکمیل ثبت نام کد را وارد کنید.");
     }
 
     protected function handleChatMemberUpdate(array $chatMemberEvent)
