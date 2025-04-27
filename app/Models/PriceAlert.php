@@ -1,0 +1,10 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class PriceAlert extends Model
+{
+    protected $fillable = ['subscriber_id', 'crypto_id', 'price_threshold'];
+}

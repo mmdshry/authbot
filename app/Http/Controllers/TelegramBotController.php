@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Portfolio;
+use App\Models\PriceAlert;
 use App\Models\Subscriber;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -71,6 +73,22 @@ class TelegramBotController extends Controller
             return $this->showNotificationSettings($chatId, $subscriber);
         }
 
+        if ($text === '💱 مبدل قیمت') {
+            return $this->promptPriceConverter($chatId);
+        }
+
+        if ($text === '💼 پورتفولیو') {
+            return $this->showPortfolio($chatId, $subscriber);
+        }
+
+        if ($text === '🔔 آلارم قیمت') {
+            return $this->promptPriceAlert($chatId);
+        }
+
+        if ($text === '📚 آموزش کریپتو') {
+            return $this->sendCryptoEducation($chatId);
+        }
+
         if ($text === 'ℹ️ درباره ربات') {
             return $this->sendAboutInfo($chatId);
         }
@@ -105,6 +123,18 @@ class TelegramBotController extends Controller
             return $this->toggleNotifications($subscriber, $chatId);
         }
 
+        if (preg_match('/💱 تبدیل (\w+) (\d+\.?\d*) (\w+)/', $text, $matches)) {
+            return $this->handlePriceConversion($chatId, $matches);
+        }
+
+        if (preg_match('/💼 افزودن (\w+) (\d+\.?\d*)/', $text, $matches)) {
+            return $this->addToPortfolio($chatId, $subscriber, $matches);
+        }
+
+        if (preg_match('/🔔 تنظیم آلارم (\w+) (\d+\.?\d*)/', $text, $matches)) {
+            return $this->setPriceAlert($chatId, $subscriber, $matches);
+        }
+
         return $this->handleOtpInput($subscriber, $chatId, $text);
     }
 
@@ -116,7 +146,9 @@ class TelegramBotController extends Controller
             'reply_markup' => json_encode([
                 'keyboard' => [
                     [['text' => '📈 قیمت رمز ارزها'], ['text' => '📊 آمار بازار']],
-                    [['text' => '⚙️ تنظیمات اعلان‌ها'], ['text' => '📝 ثبت نام']],
+                    [['text' => '💱 مبدل قیمت'], ['text' => '💼 پورتفولیو']],
+                    [['text' => '🔔 آلارم قیمت'], ['text' => '⚙️ تنظیمات اعلان‌ها']],
+                    [['text' => '📝 ثبت نام'], ['text' => '📚 آموزش کریپتو']],
                     [['text' => 'ℹ️ درباره ربات']],
                 ],
                 'resize_keyboard' => true,
@@ -186,7 +218,7 @@ class TelegramBotController extends Controller
                     'receive_notifications' => true,
                     'notification_cryptos' => array_keys($this->trackedCryptos),
                 ]);
-                return $this->sendTelegramMessage($chatId, "🎉 ثبت‌نام با موفقیت انجام شد!\nاکنون اعلان‌های جهش قیمت را دریافت خواهید کرد. از منوی اصلی ادامه دهید.", true);
+                return $this->sendTelegramMessage($chatId, "🎉 ثبت‌نام با موفقیت انجام شد!\nاکنون اعلان‌های جهش قیمت را دریافت خواهید کرد.", true);
             }
             return $this->sendTelegramMessage($chatId, '❌ کد اشتباه است. دوباره تلاش کنید.', true);
         }
@@ -223,9 +255,10 @@ class TelegramBotController extends Controller
                 $marketCapRank = $crypto['market_cap_rank'];
                 $volume24h = $crypto['total_volume'] / 1e6;
                 $chartUrl = $this->chartBaseUrl . $cryptoId;
+                $trend = $change24h > 0 ? '📈 صعودی' : ($change24h < 0 ? '📉 نزولی' : '➡️ خنثی');
 
                 $message .= sprintf(
-                    "%s %s (%s)\n💵 قیمت: $%.2f\n📈 1 ساعت: %s%.2f%%\n📊 24 ساعت: %s%.2f%%\n📉 7 روز: %s%.2f%%\n🏅 رتبه بازار: #%d\n📦 حجم 24h: $%.1fM\n🔗 نمودار: %s\n━━━━━━━━━━━━━━━━━━━━\n",
+                    "%s %s (%s)\n💵 قیمت: $%.2f\n📈 1 ساعت: %s%.2f%%\n📊 24 ساعت: %s%.2f%%\n📉 7 روز: %s%.2f%%\n🏅 رتبه بازار: #%d\n📦 حجم 24h: $%.1fM\n📊 روند: %s\n🔗 نمودار: %s\n━━━━━━━━━━━━━━━━━━━━\n",
                     $info['emoji'],
                     $info['name'],
                     $info['symbol'],
@@ -238,6 +271,7 @@ class TelegramBotController extends Controller
                     $change7d,
                     $marketCapRank,
                     $volume24h,
+                    $trend,
                     $chartUrl
                 );
             }
@@ -371,11 +405,231 @@ class TelegramBotController extends Controller
         return $this->sendTelegramMessage($chatId, $message, true);
     }
 
+    protected function promptPriceConverter($chatId)
+    {
+        $message = "💱 مبدل قیمت:\nلطفا مقدار و ارز را وارد کنید (مثال: 💱 تبدیل Bitcoin 1 USD یا 💱 تبدیل Bitcoin 1 ETH):\n";
+        $keyboard = [];
+        foreach ($this->trackedCryptos as $info) {
+            $keyboard[] = [['text' => "💱 تبدیل {$info['name']}"]];
+        }
+        $keyboard[] = [['text' => '🔙 بازگشت']];
+
+        return $this->sendTelegramMessage($chatId, $message, false, $keyboard);
+    }
+
+    protected function handlePriceConversion($chatId, $matches)
+    {
+        if (count($matches) < 4) {
+            Log::warning("Invalid price conversion format: " . json_encode($matches));
+            return $this->sendTelegramMessage($chatId, '❌ فرمت اشتباه. مثال: 💱 تبدیل Bitcoin 1 USD', true);
+        }
+
+        $cryptoName = $matches[1];
+        $amount = floatval($matches[2]);
+        $targetCurrency = strtoupper($matches[3]);
+
+        $cryptoId = null;
+        foreach ($this->trackedCryptos as $id => $info) {
+            if ($info['name'] === $cryptoName) {
+                $cryptoId = $id;
+                break;
+            }
+        }
+
+        if (!$cryptoId) {
+            Log::warning("Crypto not found for conversion: $cryptoName");
+            return $this->sendTelegramMessage($chatId, '❌ ارز یافت نشد.', true);
+        }
+
+        try {
+            $response = Http::get($this->cryptoApiUrl, [
+                'vs_currency' => 'usd',
+                'ids' => $cryptoId,
+            ]);
+            $data = $response->json();
+            $priceUsd = $data[0]['current_price'] ?? 0;
+
+            $message = "💱 نتیجه تبدیل:\n";
+            if ($targetCurrency === 'USD') {
+                $result = $amount * $priceUsd;
+                $message .= sprintf("%s %s = $%.2f USD\n", $amount, $cryptoName, $result);
+            } elseif ($targetCurrency === 'IRR') {
+                $result = $amount * $priceUsd * 42000; // نرخ تقریبی دلار به تومان
+                $message .= sprintf("%s %s = %.0f IRR\n", $amount, $cryptoName, $result);
+            } else {
+                $targetId = array_search($targetCurrency, array_column($this->trackedCryptos, 'symbol', 'id'));
+                if ($targetId) {
+                    $targetResponse = Http::get($this->cryptoApiUrl, ['vs_currency' => 'usd', 'ids' => $targetId]);
+                    $targetPriceUsd = $targetResponse->json()[0]['current_price'] ?? 0;
+                    if ($targetPriceUsd == 0) {
+                        return $this->sendTelegramMessage($chatId, '❌ خطا در دریافت قیمت ارز مقصد.', true);
+                    }
+                    $result = ($amount * $priceUsd) / $targetPriceUsd;
+                    $message .= sprintf("%s %s = %.4f %s\n", $amount, $cryptoName, $result, $targetCurrency);
+                } else {
+                    return $this->sendTelegramMessage($chatId, '❌ ارز مقصد پشتیبانی نمی‌شود.', true);
+                }
+            }
+
+            return $this->sendTelegramMessage($chatId, $message, true);
+        } catch (\Exception $e) {
+            Log::error('Price conversion error: ' . $e->getMessage());
+            return $this->sendTelegramMessage($chatId, '❌ خطا در تبدیل قیمت.', true);
+        }
+    }
+
+    protected function showPortfolio($chatId, $subscriber)
+    {
+        $portfolios = Portfolio::where('subscriber_id', $subscriber->id)->get();
+        if ($portfolios->isEmpty()) {
+            $message = "💼 پورتفولیوی شما خالی است.\nبرای افزودن کوین، از گزینه‌های زیر انتخاب کنید:\n";
+        } else {
+            $message = "💼 پورتفولیوی شما:\n━━━━━━━━━━━━━━━━━━━━\n";
+            $totalValue = 0;
+
+            try {
+                $response = Http::get($this->cryptoApiUrl, [
+                    'vs_currency' => 'usd',
+                    'ids' => implode(',', array_keys($this->trackedCryptos)),
+                ]);
+                $prices = collect($response->json())->keyBy('id');
+
+                foreach ($portfolios as $portfolio) {
+                    $cryptoId = $portfolio->crypto_id;
+                    $info = $this->trackedCryptos[$cryptoId] ?? null;
+                    if (!$info) continue;
+
+                    $price = $prices[$cryptoId]['current_price'] ?? 0;
+                    $value = $portfolio->amount * $price;
+                    $totalValue += $value;
+
+                    $message .= sprintf(
+                        "%s %s: %.4f (%s%.2f)\n",
+                        $info['emoji'],
+                        $info['name'],
+                        $portfolio->amount,
+                        $value >= 0 ? '+' : '',
+                        $value
+                    );
+                }
+
+                $message .= sprintf("💰 ارزش کل: $%.2f\n━━━━━━━━━━━━━━━━━━━━\n", $totalValue);
+            } catch (\Exception $e) {
+                Log::error('Portfolio fetch error: ' . $e->getMessage());
+                return $this->sendTelegramMessage($chatId, '❌ خطا در محاسبه پورتفولیو.', true);
+            }
+        }
+
+        $message .= "➕ برای افزودن کوین، گزینه زیر را انتخاب کنید:";
+        $keyboard = [];
+        foreach ($this->trackedCryptos as $id => $info) {
+            $keyboard[] = [['text' => "💼 افزودن {$info['name']}"]];
+        }
+        $keyboard[] = [['text' => '🔙 بازگشت']];
+
+        return $this->sendTelegramMessage($chatId, $message, false, $keyboard);
+    }
+
+    protected function addToPortfolio($chatId, $subscriber, $matches)
+    {
+        if (count($matches) < 3) {
+            Log::warning("Invalid portfolio add format: " . json_encode($matches));
+            return $this->sendTelegramMessage($chatId, '❌ فرمت اشتباه. مثال: 💼 افزودن Bitcoin 0.5', true);
+        }
+
+        $cryptoName = $matches[1];
+        $amount = floatval($matches[2]);
+
+        $cryptoId = null;
+        foreach ($this->trackedCryptos as $id => $info) {
+            if ($info['name'] === $cryptoName) {
+                $cryptoId = $id;
+                break;
+            }
+        }
+
+        if (!$cryptoId) {
+            Log::warning("Crypto not found for portfolio: $cryptoName");
+            return $this->sendTelegramMessage($chatId, '❌ ارز یافت نشد.', true);
+        }
+
+        try {
+            Portfolio::updateOrCreate(
+                ['subscriber_id' => $subscriber->id, 'crypto_id' => $cryptoId],
+                ['amount' => $amount]
+            );
+            return $this->sendTelegramMessage($chatId, "✅ $amount $cryptoName به پورتفولیو اضافه شد.", true);
+        } catch (\Exception $e) {
+            Log::error('Portfolio add error: ' . $e->getMessage());
+            return $this->sendTelegramMessage($chatId, '❌ خطا در افزودن به پورتفولیو.', true);
+        }
+    }
+
+    protected function promptPriceAlert($chatId)
+    {
+        $message = "🔔 تنظیم آلارم قیمت:\nلطفا ارز و آستانه قیمت را وارد کنید (مثال: 🔔 تنظیم آلارم Bitcoin 60000):\n";
+        $keyboard = [];
+        foreach ($this->trackedCryptos as $info) {
+            $keyboard[] = [['text' => "🔔 تنظیم آلارم {$info['name']}"]];
+        }
+        $keyboard[] = [['text' => '🔙 بازگشت']];
+
+        return $this->sendTelegramMessage($chatId, $message, false, $keyboard);
+    }
+
+    protected function setPriceAlert($chatId, $subscriber, $matches)
+    {
+        if (count($matches) < 3) {
+            Log::warning("Invalid price alert format: " . json_encode($matches));
+            return $this->sendTelegramMessage($chatId, '❌ فرمت اشتباه. مثال: 🔔 تنظیم آلارم Bitcoin 60000', true);
+        }
+
+        $cryptoName = $matches[1];
+        $priceThreshold = floatval($matches[2]);
+
+        $cryptoId = null;
+        foreach ($this->trackedCryptos as $id => $info) {
+            if ($info['name'] === $cryptoName) {
+                $cryptoId = $id;
+                break;
+            }
+        }
+
+        if (!$cryptoId) {
+            Log::warning("Crypto not found for price alert: $cryptoName");
+            return $this->sendTelegramMessage($chatId, '❌ ارز یافت نشد.', true);
+        }
+
+        try {
+            PriceAlert::updateOrCreate(
+                ['subscriber_id' => $subscriber->id, 'crypto_id' => $cryptoId],
+                ['price_threshold' => $priceThreshold]
+            );
+            return $this->sendTelegramMessage($chatId, "🔔 آلارم قیمت برای $cryptoName در $priceThreshold USD تنظیم شد.", true);
+        } catch (\Exception $e) {
+            Log::error('Price alert set error: ' . $e->getMessage());
+            return $this->sendTelegramMessage($chatId, '❌ خطا در تنظیم آلارم قیمت.', true);
+        }
+    }
+
+    protected function sendCryptoEducation($chatId)
+    {
+        $tips = [
+            "📚 **بلاکچین چیست؟**\nبلاکچین یک دفتر کل توزیع‌شده است که تراکنش‌ها را به‌صورت امن و شفاف ثبت می‌کند.\n",
+            "🔐 **کیف پول کریپتو**\nکیف پول‌ها برای ذخیره کلیدهای خصوصی رمز ارزها استفاده می‌شوند. همیشه نسخه پشتیبان تهیه کنید!\n",
+            "💸 **استیکینگ چیست؟**\nاستیکینگ یعنی قفل کردن رمز ارزها برای پشتیبانی از شبکه و کسب پاداش.\n",
+        ];
+
+        $message = "📚 نکات آموزشی کریپتو:\n━━━━━━━━━━━━━━━━━━━━\n" . $tips[array_rand($tips)] . "━━━━━━━━━━━━━━━━━━━━\n";
+        return $this->sendTelegramMessage($chatId, $message, true);
+    }
+
     protected function sendAboutInfo($chatId)
     {
         $message = "ℹ️ درباره ربات کریپتو:\n━━━━━━━━━━━━━━━━━━━━\n";
-        $message .= "🚀 این ربات برای ارائه قیمت‌های لحظه‌ای و اعلان‌های جهش قیمت رمز ارزها طراحی شده است.\n";
-        $message .= "🌟 ویژگی‌ها:\n- قیمت‌های لحظه‌ای با نمودار\n- اعلان جهش قیمت\n- آمار بازار\n";
+        $message .= "🚀 رباتی برای مدیریت رمز ارزها با ویژگی‌های پیشرفته:\n";
+        $message .= "🌟 ویژگی‌ها:\n- قیمت‌های لحظه‌ای و نمودار\n- مبدل قیمت\n- پورتفولیو شخصی\n- آلارم قیمت\n- آموزش کریپتو\n";
+        $message .= "📩 پشتیبانی: @CryptoBotSupport\n━━━━━━━━━━━━━━━━━━━━\n";
 
         return $this->sendTelegramMessage($chatId, $message, true);
     }
